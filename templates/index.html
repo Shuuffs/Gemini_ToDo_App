@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>AI To-Do List</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='style.css') }}"
+    />
+  </head>
+  <body>
+    <div class="container">
+      <!-- Task Manager -->
+      <div class="tasks-panel">
+        <h2>Task Manager</h2>
+        <div class="task-controls">
+          <input
+            type="text"
+            id="search-task"
+            placeholder="Search tasks..."
+            oninput="renderTasks()"
+          />
+          <select id="filter-task" onchange="renderTasks()">
+            <option value="all">All</option>
+            <option value="pending">Pending</option>
+            <option value="completed">Completed</option>
+          </select>
+          <select id="sort-task" onchange="renderTasks()">
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="alphabetical">A → Z</option>
+          </select>
+        </div>
+        <ul id="task-list"></ul>
+        <div class="add-task">
+          <input type="text" id="new-task" placeholder="New task..." />
+          <input type="date" id="new-task-due" />
+          <button onclick="addTask()">Add Task</button>
+        </div>
+      </div>
+
+      <!-- AI Assistant -->
+      <div class="chat-panel">
+        <h2>AI Assistant</h2>
+        <div id="chat-box"></div>
+        <div class="chat-input">
+          <input type="text" id="user-input" placeholder="Talk to AI..." />
+          <button onclick="sendMessage()">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let tasksCache = [];
+
+      async function loadTasks() {
+        const res = await fetch("/tasks");
+        tasksCache = await res.json();
+        renderTasks();
+      }
+
+      function renderTasks() {
+        const list = document.getElementById("task-list");
+        list.innerHTML = "";
+
+        const search = document
+          .getElementById("search-task")
+          .value.toLowerCase();
+        const filter = document.getElementById("filter-task").value;
+        const sort = document.getElementById("sort-task").value;
+
+        let tasks = [...tasksCache];
+        if (filter === "pending") tasks = tasks.filter((t) => !t.completed);
+        if (filter === "completed") tasks = tasks.filter((t) => t.completed);
+        if (search)
+          tasks = tasks.filter((t) =>
+            t.description.toLowerCase().includes(search)
+          );
+
+        if (sort === "newest") tasks.sort((a, b) => b.id - a.id);
+        if (sort === "oldest") tasks.sort((a, b) => a.id - b.id);
+        if (sort === "alphabetical")
+          tasks.sort((a, b) => a.description.localeCompare(b.description));
+
+        tasks.forEach((t) => {
+          const li = document.createElement("li");
+          const desc = document.createElement("span");
+          desc.textContent =
+            t.description + (t.due_time ? ` (Due: ${t.due_time})` : "");
+          desc.style.textDecoration = t.completed ? "line-through" : "none";
+          li.appendChild(desc);
+
+          const completeBtn = document.createElement("button");
+          completeBtn.textContent = "✅";
+          completeBtn.onclick = () => completeTask(t.id);
+          li.appendChild(completeBtn);
+
+          const deleteBtn = document.createElement("button");
+          deleteBtn.textContent = "🗑";
+          deleteBtn.onclick = () => deleteTask(t.id);
+          li.appendChild(deleteBtn);
+
+          list.appendChild(li);
+        });
+      }
+
+      async function addTask() {
+        const desc = document.getElementById("new-task").value;
+        const due_time = document.getElementById("new-task-due").value; // YYYY-MM-DD
+        if (!desc) return;
+
+        await fetch("/tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ description: desc, due_time }),
+        });
+
+        document.getElementById("new-task").value = "";
+        document.getElementById("new-task-due").value = "";
+        await loadTasks();
+      }
+
+      async function completeTask(id) {
+        await fetch(`/tasks/${id}/complete`, { method: "PUT" });
+        await loadTasks();
+      }
+
+      async function deleteTask(id) {
+        await fetch(`/tasks/${id}`, { method: "DELETE" });
+        await loadTasks();
+      }
+
+      async function addTaskFromAI(desc, due_time) {
+        await fetch("/tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ description: desc, due_time }),
+        });
+        await loadTasks();
+      }
+
+      async function completeAllTasks() {
+        for (let task of tasksCache) {
+          await completeTask(task.id);
+        }
+      }
+
+      async function deleteAllTasks() {
+        for (let task of tasksCache) {
+          await deleteTask(task.id);
+        }
+      }
+
+      async function sendMessage() {
+        const text = document.getElementById("user-input").value;
+        if (!text) return;
+        const chatBox = document.getElementById("chat-box");
+        chatBox.innerHTML += `<div class="user">You: ${text}</div>`;
+
+        const res = await fetch("/ai", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_text: text }),
+        });
+
+        const data = await res.json();
+
+        let parsed = null;
+        try {
+          parsed = JSON.parse(data.ai_response);
+        } catch {}
+
+        if (parsed) {
+          if (Array.isArray(parsed)) {
+            for (let cmd of parsed) {
+              const msg = await handleCommand(cmd);
+              if (msg) chatBox.innerHTML += `<div class="ai">AI: ${msg}</div>`;
+            }
+          } else {
+            const msg = await handleCommand(parsed);
+            if (msg) chatBox.innerHTML += `<div class="ai">AI: ${msg}</div>`;
+          }
+        } else {
+          chatBox.innerHTML += `<div class="ai">AI: ${data.ai_response}</div>`;
+        }
+
+        document.getElementById("user-input").value = "";
+        chatBox.scrollTo({ top: chatBox.scrollHeight, behavior: "smooth" });
+      }
+
+      async function handleCommand(cmd) {
+        const desc = cmd.parameters?.description;
+        const due_time = cmd.parameters?.due_time;
+        let msg = "";
+
+        if (cmd.function === "addTask") {
+          await addTaskFromAI(desc, due_time);
+          msg = `Added "${desc}"${due_time ? ` (Due: ${due_time})` : ""}.`;
+        } else if (cmd.function === "completeTask") {
+          let task = tasksCache.find(
+            (t) => t.description.toLowerCase() === desc?.toLowerCase()
+          );
+          if (task) {
+            await completeTask(task.id);
+            msg = `Completed "${desc}".`;
+          }
+        } else if (cmd.function === "completeAllTasks") {
+          await completeAllTasks();
+          msg = "All tasks completed.";
+        } else if (cmd.function === "deleteTask") {
+          let task = tasksCache.find(
+            (t) => t.description.toLowerCase() === desc?.toLowerCase()
+          );
+          if (task) {
+            await deleteTask(task.id);
+            msg = `Deleted "${desc}".`;
+          }
+        } else if (cmd.function === "deleteAllTasks") {
+          await deleteAllTasks();
+          msg = "All tasks deleted.";
+        } else if (cmd.function === "viewTasks") {
+          await loadTasks();
+          msg = "Tasks listed.";
+        }
+
+        return msg;
+      }
+
+      document
+        .getElementById("user-input")
+        .addEventListener("keypress", function (e) {
+          if (e.key === "Enter") sendMessage();
+        });
+
+      window.onload = loadTasks;
+    </script>
+  </body>
+</html>
