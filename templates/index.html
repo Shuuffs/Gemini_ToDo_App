@@ -30,6 +30,7 @@
             <option value="oldest">Oldest</option>
             <option value="alphabetical">A → Z</option>
           </select>
+          <button class="refresh-btn" onclick="loadTasks()">Refresh</button>
         </div>
         <ul id="task-list"></ul>
         <div class="add-task">
@@ -53,13 +54,26 @@
     <script>
       let tasksCache = [];
 
+      // Format date into "10 Oct 2025"
+      function formatDate(dateStr) {
+        if (!dateStr) return "";
+        const date = new Date(dateStr);
+        return date.toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+        });
+      }
+
+      // Load tasks from backend
       async function loadTasks() {
         const res = await fetch("/tasks");
         tasksCache = await res.json();
-        renderTasks();
+        refreshTaskManager();
       }
 
-      function renderTasks() {
+      // Render only the task panel
+      function refreshTaskManager() {
         const list = document.getElementById("task-list");
         list.innerHTML = "";
 
@@ -86,7 +100,8 @@
           const li = document.createElement("li");
           const desc = document.createElement("span");
           desc.textContent =
-            t.description + (t.due_time ? ` (Due: ${t.due_time})` : "");
+            t.description +
+            (t.due_date ? ` (Due: ${formatDate(t.due_date)})` : "");
           desc.style.textDecoration = t.completed ? "line-through" : "none";
           li.appendChild(desc);
 
@@ -104,56 +119,57 @@
         });
       }
 
+      // --- Task Actions ---
       async function addTask() {
         const desc = document.getElementById("new-task").value;
-        const due_time = document.getElementById("new-task-due").value; // YYYY-MM-DD
+        const due_date = document.getElementById("new-task-due").value;
         if (!desc) return;
 
-        await fetch("/tasks", {
+        const res = await fetch("/tasks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ description: desc, due_time }),
+          body: JSON.stringify({ description: desc, due_date }),
         });
 
-        document.getElementById("new-task").value = "";
-        document.getElementById("new-task-due").value = "";
-        await loadTasks();
+        if (res.ok) {
+          await loadTasks();
+          document.getElementById("new-task").value = "";
+          document.getElementById("new-task-due").value = "";
+        }
       }
 
       async function completeTask(id) {
-        await fetch(`/tasks/${id}/complete`, { method: "PUT" });
-        await loadTasks();
+        const res = await fetch(`/tasks/${id}/complete`, { method: "PUT" });
+        if (res.ok) await loadTasks();
       }
 
       async function deleteTask(id) {
-        await fetch(`/tasks/${id}`, { method: "DELETE" });
-        await loadTasks();
+        const res = await fetch(`/tasks/${id}`, { method: "DELETE" });
+        if (res.ok) await loadTasks();
       }
 
-      async function addTaskFromAI(desc, due_time) {
-        await fetch("/tasks", {
+      async function addTaskFromAI(desc, due_date) {
+        const res = await fetch("/tasks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ description: desc, due_time }),
+          body: JSON.stringify({ description: desc, due_date }),
         });
-        await loadTasks();
+        if (res.ok) await loadTasks();
       }
 
       async function completeAllTasks() {
-        for (let task of tasksCache) {
-          await completeTask(task.id);
-        }
+        for (let task of tasksCache) await completeTask(task.id);
       }
 
       async function deleteAllTasks() {
-        for (let task of tasksCache) {
-          await deleteTask(task.id);
-        }
+        for (let task of tasksCache) await deleteTask(task.id);
       }
 
+      // --- AI Chat ---
       async function sendMessage() {
         const text = document.getElementById("user-input").value;
         if (!text) return;
+
         const chatBox = document.getElementById("chat-box");
         chatBox.innerHTML += `<div class="user">You: ${text}</div>`;
 
@@ -164,8 +180,8 @@
         });
 
         const data = await res.json();
-
         let parsed = null;
+
         try {
           parsed = JSON.parse(data.ai_response);
         } catch {}
@@ -188,14 +204,17 @@
         chatBox.scrollTo({ top: chatBox.scrollHeight, behavior: "smooth" });
       }
 
+      // --- AI Command Handling ---
       async function handleCommand(cmd) {
         const desc = cmd.parameters?.description;
-        const due_time = cmd.parameters?.due_time;
+        const due_date = cmd.parameters?.due_date;
         let msg = "";
 
         if (cmd.function === "addTask") {
-          await addTaskFromAI(desc, due_time);
-          msg = `Added "${desc}"${due_time ? ` (Due: ${due_time})` : ""}.`;
+          await addTaskFromAI(desc, due_date);
+          msg = `Added "${desc}"${
+            due_date ? ` (Due: ${formatDate(due_date)})` : ""
+          }.`;
         } else if (cmd.function === "completeTask") {
           let task = tasksCache.find(
             (t) => t.description.toLowerCase() === desc?.toLowerCase()
@@ -226,12 +245,14 @@
         return msg;
       }
 
+      // Press Enter to send
       document
         .getElementById("user-input")
         .addEventListener("keypress", function (e) {
           if (e.key === "Enter") sendMessage();
         });
 
+      // Initial load
       window.onload = loadTasks;
     </script>
   </body>

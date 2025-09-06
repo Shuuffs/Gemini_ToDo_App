@@ -5,7 +5,8 @@ from dotenv import load_dotenv
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import google.generativeai as genai
-import re, json
+import re, json, random
+from datetime import date, timedelta
 
 app = Flask(__name__)
 CORS(app)
@@ -20,7 +21,7 @@ if GEMINI_API_KEY:
 DB_CONFIG = {
     "dbname": "todos_db",
     "user": "postgres",
-    "password": 1507,   # change this if your Postgres password is different
+    "password": 1507,   # change if needed
     "host": "localhost",
     "port": 5432
 }
@@ -106,6 +107,17 @@ def complete_all():
     complete_all_tasks()
     return jsonify({"message": "All tasks completed"}), 200
 
+@app.route("/tasks/<int:task_id>/date", methods=["PUT"])
+def update_date(task_id):
+    data = request.get_json()
+    due_time = data.get("due_time")
+    with psycopg2.connect(**DB_CONFIG) as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE tasks SET due_date=%s WHERE id=%s", (due_time, task_id))
+            conn.commit()
+    return jsonify({"message": "Date updated"})
+
+
 @app.route("/tasks/delete_all", methods=["DELETE"])
 def delete_all():
     delete_all_tasks()
@@ -122,10 +134,12 @@ def ai_command():
         return jsonify({"ai_response": "⚠️ Gemini unavailable, add tasks manually."}), 200
 
     system_prompt = f"""
-You are a helpful AI assistant for a To-Do List app.
+You are Hanni, a helpful AI assistant for a To-Do List app.
 
 Rules:
 - Always output valid JSON for commands (inside triple backticks).
+- If the user specifies a due date, use it exactly as provided (YYYY-MM-DD).
+- Only generate a random due date if the user did not specify one.
 - Commands:
    - addTask: {{"command": "addTask", "tasks": [{{"description": "...", "due_time": null}}]}}
    - completeTask: {{"command": "completeTask", "task_id": number}}
@@ -154,8 +168,15 @@ User: "{user_text}"
                     for t in command_data.get("tasks", []):
                         task = insert_task(t["description"], t.get("due_time"))
                         tasks_added.append(task)
+
+                    # Build a message showing task names and actual due dates
+                    msg_list = []
+                    for task in tasks_added:
+                        due = f" (Due: {task['due_date']})" if task['due_date'] else ""
+                        msg_list.append(f"{task['description']}{due}")
+
                     return jsonify({
-                        "ai_response": f"✅ Added {len(tasks_added)} task(s).",
+                        "ai_response": f"✅ Added {len(tasks_added)} task(s): " + ", ".join(msg_list),
                         "tasks": tasks_added
                     }), 200
 

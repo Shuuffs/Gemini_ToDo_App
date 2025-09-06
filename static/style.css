@@ -8,6 +8,30 @@ body {
   justify-content: center;
 }
 
+.refresh-btn {
+  padding: 6px 6px;
+  margin-left: 3px;
+  border-radius: 6px;
+  border: none;
+  background-color: #00b0ff; /* same blue as Add Task */
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.refresh-btn:hover {
+  background-color: #0091ea;
+}
+
+#task-list input[type="date"] {
+  margin-left: 10px;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background-color: #2a2a2a;
+  color: #f0f0f0;
+}
+
 .container {
   display: flex;
   width: 90%;
