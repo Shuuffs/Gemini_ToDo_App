@@ -2,8 +2,7 @@ from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 import os
 from dotenv import load_dotenv
-import psycopg2
-from psycopg2.extras import RealDictCursor
+from supabase import create_client, Client
 import google.generativeai as genai
 import re, json, random
 from datetime import date, timedelta
@@ -17,58 +16,79 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# ------------------- Database Config -------------------
-DB_CONFIG = {
-    "dbname": "todos_db",
-    "user": "postgres",
-    "password": 1507,   # change if needed
-    "host": "localhost",
-    "port": 5432
-}
+# ------------------- Supabase Config -------------------
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("⚠️ SUPABASE_URL and SUPABASE_KEY must be set in .env file")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ------------------- Helper Functions -------------------
-def get_db_connection():
-    return psycopg2.connect(**DB_CONFIG, cursor_factory=RealDictCursor)
-
 def fetch_tasks():
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM tasks ORDER BY id DESC;")
-            return cur.fetchall()
+    response = supabase.table('tasks').select('*').order('id', desc=True).execute()
+    return response.data
 
 def insert_task(description, due_date=None):
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO tasks (description, due_date) VALUES (%s, %s) RETURNING *;",
-                (description, due_date)
-            )
-            return cur.fetchone()
+    data = {
+        "description": description,
+        "due_date": due_date
+    }
+    response = supabase.table('tasks').insert(data).execute()
+    return response.data[0] if response.data else None
 
 def update_task_completed(task_id):
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE tasks SET completed = TRUE WHERE id = %s RETURNING *;",
-                (task_id,)
-            )
-            return cur.fetchone()
+    response = supabase.table('tasks').update({"completed": True}).eq('id', task_id).execute()
+    return response.data[0] if response.data else None
 
 def delete_task_by_id(task_id):
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM tasks WHERE id = %s RETURNING *;", (task_id,))
-            return cur.fetchone()
+    response = supabase.table('tasks').delete().eq('id', task_id).execute()
+    return response.data[0] if response.data else None
 
 def complete_all_tasks():
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE tasks SET completed = TRUE;")
+    supabase.table('tasks').update({"completed": True}).neq('id', 0).execute()
 
 def delete_all_tasks():
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM tasks;")
+    supabase.table('tasks').delete().neq('id', 0).execute()
+
+def add_random_tasks(count=10):
+    """Add random sample tasks for testing/demo purposes"""
+    sample_tasks = [
+        {"description": "Buy groceries for the week", "due_date": None},
+        {"description": "Complete project documentation", "due_date": None},
+        {"description": "Schedule dentist appointment", "due_date": None},
+        {"description": "Call mom to catch up", "due_date": None},
+        {"description": "Prepare presentation slides", "due_date": None},
+        {"description": "Review and respond to emails", "due_date": None},
+        {"description": "Exercise for 30 minutes", "due_date": None},
+        {"description": "Read chapter 5 of the book", "due_date": None},
+        {"description": "Clean and organize workspace", "due_date": None},
+        {"description": "Update resume and LinkedIn profile", "due_date": None},
+        {"description": "Pay monthly bills", "due_date": None},
+        {"description": "Plan weekend trip", "due_date": None},
+        {"description": "Water the plants", "due_date": None},
+        {"description": "Backup important files", "due_date": None},
+        {"description": "Learn a new programming concept", "due_date": None},
+        {"description": "Cook a healthy meal", "due_date": None},
+        {"description": "Fix the leaking faucet", "due_date": None},
+        {"description": "Sort through old photos", "due_date": None},
+        {"description": "Meditate for 10 minutes", "due_date": None},
+        {"description": "Write in journal", "due_date": None},
+    ]
+    
+    # Randomly select tasks
+    import random as rand
+    selected_tasks = rand.sample(sample_tasks, min(count, len(sample_tasks)))
+    
+    # Insert tasks
+    added_tasks = []
+    for task_data in selected_tasks:
+        response = supabase.table('tasks').insert(task_data).execute()
+        if response.data:
+            added_tasks.extend(response.data)
+    
+    return added_tasks
 
 # ------------------- Routes -------------------
 @app.route("/")
@@ -111,10 +131,7 @@ def complete_all():
 def update_date(task_id):
     data = request.get_json()
     due_time = data.get("due_time")
-    with psycopg2.connect(**DB_CONFIG) as conn:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE tasks SET due_date=%s WHERE id=%s", (due_time, task_id))
-            conn.commit()
+    supabase.table('tasks').update({"due_date": due_time}).eq('id', task_id).execute()
     return jsonify({"message": "Date updated"})
 
 
@@ -122,6 +139,17 @@ def update_date(task_id):
 def delete_all():
     delete_all_tasks()
     return jsonify({"message": "All tasks deleted"}), 200
+
+@app.route("/tasks/add_random", methods=["POST"])
+def add_random():
+    """Add 10 random tasks for testing/demo"""
+    data = request.get_json() or {}
+    count = data.get("count", 10)
+    tasks = add_random_tasks(count)
+    return jsonify({
+        "message": f"Added {len(tasks)} random tasks",
+        "tasks": tasks
+    }), 201
 
 # ------------------- AI Endpoint -------------------
 @app.route("/ai", methods=["POST"])
@@ -147,12 +175,13 @@ Rules:
    - deleteTask: {{"command": "deleteTask", "task_id": number}}
    - deleteAllTasks: {{"command": "deleteAllTasks"}}
    - viewTasks: {{"command": "viewTasks"}}
+   - addRandomTasks: {{"command": "addRandomTasks", "count": 10}}
 - For casual chat, just reply normally without JSON.
 User: "{user_text}"
 """
 
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content(system_prompt)
         ai_message = response.text.strip()
 
@@ -209,6 +238,14 @@ User: "{user_text}"
                 elif command == "viewTasks":
                     tasks = fetch_tasks()
                     return jsonify({"ai_response": "📋 Your tasks:", "tasks": tasks}), 200
+
+                elif command == "addRandomTasks":
+                    count = command_data.get("count", 10)
+                    tasks = add_random_tasks(count)
+                    return jsonify({
+                        "ai_response": f"🎲 Added {len(tasks)} random tasks for testing!",
+                        "tasks": tasks
+                    }), 200
 
             except Exception as e:
                 return jsonify({"ai_response": f"⚠️ JSON parse error: {str(e)}"}), 200

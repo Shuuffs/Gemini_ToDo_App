@@ -18,14 +18,14 @@
             type="text"
             id="search-task"
             placeholder="Search tasks..."
-            oninput="renderTasks()"
+            oninput="refreshTaskManager()"
           />
-          <select id="filter-task" onchange="renderTasks()">
+          <select id="filter-task" onchange="refreshTaskManager()">
             <option value="all">All</option>
             <option value="pending">Pending</option>
             <option value="completed">Completed</option>
           </select>
-          <select id="sort-task" onchange="renderTasks()">
+          <select id="sort-task" onchange="refreshTaskManager()">
             <option value="newest">Newest</option>
             <option value="oldest">Oldest</option>
             <option value="alphabetical">A → Z</option>

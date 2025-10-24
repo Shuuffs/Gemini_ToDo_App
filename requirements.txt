@@ -1,5 +1,5 @@
 Flask
 flask-cors
-openai
-psycopg2-binary
+google-generativeai
+supabase
 python-dotenv
